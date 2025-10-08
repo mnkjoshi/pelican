@@ -14,7 +14,7 @@
     <div class="title-bar">
         <div class="title-info">
             <span class="app-title">Pelican</span>
-            <span class="app-version">v0.1.0</span>
+            <span class="app-version">v1.0.0</span>
         </div>
         <div class="window-controls">
             <button class="window-btn minimize-btn" onclick="window.pelicanAPI.windowControl('minimize')">
@@ -36,7 +36,12 @@
             <div class="widget canvas-widget" id="canvas-widget">
                 <div class="widget-header">
                     <h3>Canvas Assignments</h3>
-                    <div class="widget-status" id="canvas-status"></div>
+                    <div class="widget-header-actions">
+                        <button class="expand-btn" onclick="openGradesModal()" title="View Grades">
+                            <i data-feather="bar-chart-2"></i>
+                        </button>
+                        <div class="widget-status" id="canvas-status"></div>
+                    </div>
                 </div>
                 <div class="widget-content" id="canvas-content">
                     <div class="loading">Loading assignments...</div>
@@ -82,10 +87,10 @@
                 </div>
             </div>
 
-            <!-- Socials Dashboard Widget -->
+            <!-- Analytics Dashboard Widget -->
             <div class="widget socials-widget" id="socials-widget">
                 <div class="widget-header">
-                    <h3>Social Metrics</h3>
+                    <h3>Analytics</h3>
                 </div>
                 <div class="widget-content" id="socials-content">
                     <div class="loading">Loading metrics...</div>
@@ -181,13 +186,13 @@
     <div class="modal-overlay" id="calendar-modal" onclick="closeCalendarModal()">
         <div class="modal-content calendar-modal-content" onclick="event.stopPropagation()">
             <div class="modal-header">
-                <h2>Google Calendar</h2>
+                <h2>Upcoming Events</h2>
                 <button class="close-modal-btn" onclick="closeCalendarModal()">
                     <i data-feather="x"></i>
                 </button>
             </div>
             <div class="modal-body">
-                <iframe id="calendar-iframe" src="" frameborder="0"></iframe>
+                <div class="loading">Loading events...</div>
             </div>
         </div>
     </div>
@@ -243,6 +248,23 @@
                             </button>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Grades Modal -->
+    <div class="modal-overlay" id="grades-modal" onclick="closeGradesModal()">
+        <div class="modal-content grades-modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h2>Canvas Grades</h2>
+                <button class="close-modal-btn" onclick="closeGradesModal()">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="grades-container" id="grades-container">
+                    <div class="loading">Loading grades...</div>
                 </div>
             </div>
         </div>

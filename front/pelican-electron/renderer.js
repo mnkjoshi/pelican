@@ -51,43 +51,36 @@ class PelicanDashboard {
         const content = document.getElementById('canvas-content');
         const status = document.getElementById('canvas-status');
         
+        // Show loading state
+        content.innerHTML = '<div class="loading">Loading Canvas assignments...</div>';
+        status.innerHTML = '<span class="status-indicator status-loading"></span> Loading...';
+        
         try {
-            // Mock data for Canvas assignments with URLs
-            const assignments = [
-                {
-                    title: 'Web Development Project Final',
-                    course: 'CS 4640 - Programming Languages for Web Apps',
-                    dueDate: new Date('2025-10-15T23:59:00'),
-                    submitted: false,
-                    url: 'https://canvas.example.edu/courses/12345/assignments/67890'
-                },
-                {
-                    title: 'Database Design Assignment',
-                    course: 'CS 3750 - Database Systems',
-                    dueDate: new Date('2025-10-12T11:59:00'),
-                    submitted: true,
-                    url: 'https://canvas.example.edu/courses/12346/assignments/67891'
-                },
-                {
-                    title: 'Algorithm Analysis Paper',
-                    course: 'CS 4102 - Algorithms',
-                    dueDate: new Date('2025-10-18T23:59:00'),
-                    submitted: false,
-                    url: 'https://canvas.example.edu/courses/12347/assignments/67892'
-                }
-            ];
-
-            const now = new Date();
-            const upcomingAssignments = assignments
-                .filter(a => a.dueDate > now)
-                .sort((a, b) => a.dueDate - b.dueDate)
-                .slice(0, 5);
-
-            content.innerHTML = this.renderAssignments(upcomingAssignments);
-            status.innerHTML = `<span class="status-indicator status-online"></span> ${upcomingAssignments.length} upcoming`;
+            console.log('Fetching Canvas assignments...');
+            
+            // Get Canvas deadlines from main process
+            const result = await window.pelicanAPI.invoke('get-canvas-deadlines', 7); // Get deadlines for next 7 days
+            
+            if (result.success) {
+                const assignments = result.deadlines; // Show all upcoming assignments (no limit)
+                
+                content.innerHTML = this.renderAssignments(assignments);
+                status.innerHTML = `<span class="status-indicator status-online"></span> ${result.totalCount} upcoming`;
+                
+                this.addToConsole(`Canvas: Loaded ${result.totalCount} upcoming assignments`, 'success');
+            } else {
+                throw new Error(result.error || 'Failed to fetch Canvas data');
+            }
             
         } catch (error) {
-            content.innerHTML = '<div class="error">Unable to load Canvas assignments</div>';
+            console.error('Canvas widget error:', error);
+            content.innerHTML = `
+                <div class="error">
+                    <div class="error-title">Canvas Connection Failed</div>
+                    <div class="error-message">${error.message}</div>
+                    <button onclick="dashboard.loadCanvasWidget()" class="retry-btn">Retry</button>
+                </div>
+            `;
             status.innerHTML = '<span class="status-indicator status-offline"></span> Offline';
             this.addToConsole(`Canvas widget error: ${error.message}`, 'error');
         }
@@ -100,57 +93,127 @@ class PelicanDashboard {
 
         return `
             <div class="assignment-list">
-                ${assignments.map(assignment => `
-                    <div class="assignment-item" onclick="openAssignment('${assignment.url || '#'}')">
-                        <div class="assignment-title">${assignment.title}</div>
-                        <div class="assignment-course">${assignment.course}</div>
-                        <div class="assignment-due">Due: ${this.formatDate(assignment.dueDate)}</div>
-                    </div>
-                `).join('')}
+                ${assignments.map(assignment => {
+                    const isOverdue = new Date(assignment.dueDate) < new Date();
+                    const urgencyClass = this.getAssignmentUrgency(assignment.dueDate);
+                    
+                    return `
+                        <div class="assignment-item ${urgencyClass}" onclick="openCanvasAssignment('${assignment.url || '#'}')">
+                            <div class="assignment-header">
+                                <div class="assignment-title">${assignment.title}</div>
+                                ${assignment.points ? `<div class="assignment-points">${assignment.points} pts</div>` : ''}
+                            </div>
+                            <div class="assignment-course">${assignment.courseCode || assignment.course}</div>
+                            <div class="assignment-due ${isOverdue ? 'overdue' : ''}">
+                                ${isOverdue ? 'Overdue: ' : 'Due: '}${assignment.dueDateFormatted}
+                            </div>
+                            ${assignment.submitted ? '<div class="assignment-status submitted">✓ Submitted</div>' : '<div class="assignment-status pending">⏱ Pending</div>'}
+                        </div>
+                    `;
+                }).join('')}
             </div>
         `;
+    }
+
+    getAssignmentUrgency(dueDate) {
+        const now = new Date();
+        const due = new Date(dueDate);
+        const hoursUntilDue = (due - now) / (1000 * 60 * 60);
+        
+        if (hoursUntilDue < 0) return 'overdue';
+        if (hoursUntilDue < 24) return 'urgent';
+        if (hoursUntilDue < 72) return 'soon';
+        return 'normal';
     }
 
     // Google Calendar Widget
     async loadCalendarWidget() {
         const content = document.getElementById('calendar-content');
         
+        // Show loading state
+        content.innerHTML = '<div class="loading">Loading calendar events...</div>';
+        
         try {
-            // Mock calendar events
-            const events = [
-                {
-                    title: 'CS 4640 Lecture',
-                    time: new Date('2025-10-08T10:00:00'),
-                    duration: 90
-                },
-                {
-                    title: 'Team Meeting',
-                    time: new Date('2025-10-08T14:00:00'),
-                    duration: 60
-                },
-                {
-                    title: 'Project Demo',
-                    time: new Date('2025-10-09T16:00:00'),
-                    duration: 30
-                },
-                {
-                    title: 'Office Hours',
-                    time: new Date('2025-10-10T13:00:00'),
-                    duration: 120
-                }
-            ];
-
-            const now = new Date();
-            const upcomingEvents = events
-                .filter(e => e.time > now)
-                .sort((a, b) => a.time - b.time)
-                .slice(0, 4);
-
-            content.innerHTML = this.renderEvents(upcomingEvents);
+            // First check if Google Calendar is authenticated
+            const authStatus = await window.pelicanAPI.checkGoogleAuth();
+            
+            if (!authStatus.authenticated) {
+                content.innerHTML = await this.renderGoogleAuthSetup();
+                return;
+            }
+            
+            console.log('Fetching calendar events...');
+            
+            // Get calendar events from main process
+            const result = await window.pelicanAPI.invoke('get-calendar-events', 7); // Next 7 days
+            
+            if (result.success) {
+                const events = result.events.slice(0, 4); // Show top 4 in widget
+                
+                content.innerHTML = this.renderEvents(events);
+                
+                // Enhanced logging with calendar information
+                const calendarInfo = result.calendarsChecked ? ` from ${result.calendarsChecked} calendars` : '';
+                const calendarNames = result.calendarNames ? ` (${result.calendarNames.join(', ')})` : '';
+                this.addToConsole(`Calendar: Loaded ${result.totalCount} upcoming events${calendarInfo}${calendarNames}`, 'success');
+            } else if (result.needsAuth) {
+                content.innerHTML = await this.renderGoogleAuthSetup();
+            } else {
+                throw new Error(result.error || 'Failed to fetch calendar data');
+            }
             
         } catch (error) {
-            content.innerHTML = '<div class="error">Unable to load calendar events</div>';
+            console.error('Calendar widget error:', error);
+            content.innerHTML = `
+                <div class="error">
+                    <div class="error-title">Calendar Connection Failed</div>
+                    <div class="error-message">${error.message}</div>
+                    <button onclick="dashboard.loadCalendarWidget()" class="retry-btn">Retry</button>
+                </div>
+            `;
             this.addToConsole(`Calendar widget error: ${error.message}`, 'error');
+        }
+    }
+
+    async renderGoogleAuthSetup() {
+        // Check if already authenticated
+        const authStatus = await window.pelicanAPI.checkGoogleAuth();
+        
+        if (authStatus.authenticated) {
+            return `
+                <div class="google-auth-setup authenticated">
+                    <div class="auth-title">Google Calendar Connected</div>
+                    <div class="auth-description">
+                        Your Google Calendar is connected and syncing
+                    </div>
+                    <div class="auth-buttons">
+                        <button onclick="disconnectGoogleCalendar()" class="disconnect-btn">
+                            <i data-feather="x-circle"></i>
+                            Disconnect Account
+                        </button>
+                        <button onclick="refreshCalendarEvents()" class="refresh-btn">
+                            <i data-feather="refresh-cw"></i>
+                            Refresh Events
+                        </button>
+                    </div>
+                </div>
+            `;
+        } else {
+            return `
+                <div class="google-auth-setup">
+                    <div class="auth-title">Connect Google Calendar</div>
+                    <div class="auth-description">
+                        Connect your Google account to view your calendar events
+                    </div>
+                    <button onclick="connectGoogleCalendar()" class="connect-btn">
+                        <i data-feather="calendar"></i>
+                        Connect Google Calendar
+                    </button>
+                    <div class="auth-note">
+                        Your calendar data stays private and secure
+                    </div>
+                </div>
+            `;
         }
     }
 
@@ -162,13 +225,49 @@ class PelicanDashboard {
         return `
             <div class="event-list">
                 ${events.map(event => `
-                    <div class="event-item">
-                        <div class="event-title">${event.title}</div>
-                        <div class="event-time">${this.formatDateTime(event.time)}</div>
+                    <div class="event-item ${event.type || ''}" onclick="openEventDetails('${event.id}')">
+                        <div class="event-header">
+                            <div class="event-title">${event.title}</div>
+                            <div class="event-type ${event.type || 'default'}">${this.formatEventType(event.type)}</div>
+                        </div>
+                        <div class="event-time">${event.startFormatted}</div>
+                        ${event.calendarName ? `
+                            <div class="event-calendar" style="color: ${event.calendarColor || '#666'}">
+                                <i data-feather="calendar"></i>
+                                ${event.calendarName}
+                            </div>
+                        ` : ''}
+                        ${event.location ? `
+                            <div class="event-location" onclick="event.stopPropagation(); openGoogleMaps('${event.googleMapsUrl}')">
+                                <i data-feather="map-pin"></i>
+                                ${this.truncateLocation(event.location)}
+                            </div>
+                        ` : ''}
+                        <div class="event-duration">${event.duration} min</div>
                     </div>
                 `).join('')}
             </div>
         `;
+    }
+
+    formatEventType(type) {
+        const types = {
+            'class': 'Class',
+            'meeting': 'Meeting', 
+            'exam': 'Exam',
+            'study': 'Study',
+            'personal': 'Personal',
+            'seminar': 'Seminar',
+            'default': 'Event'
+        };
+        return types[type] || 'Event';
+    }
+
+    truncateLocation(location) {
+        if (location.length > 30) {
+            return location.substring(0, 30) + '...';
+        }
+        return location;
     }
 
     // Service Status Widget
@@ -249,38 +348,36 @@ class PelicanDashboard {
         `;
     }
 
-    // Socials Widget
+    // Analytics Widget (Roblox + GitHub)
     async loadSocialsWidget() {
         const content = document.getElementById('socials-content');
+        content.innerHTML = '<div class="loading">Loading analytics...</div>';
         
         try {
-            const socials = await window.pelicanAPI.getConfig('socials');
-            content.innerHTML = this.renderSocialMetrics(socials);
+            this.addToConsole('Analytics: Fetching Roblox game visits and GitHub commits...', 'info');
+            const analyticsData = await window.pelicanAPI.getAnalyticsData();
+            content.innerHTML = this.renderSocialMetrics(analyticsData);
+            
+            // Log successful data fetch
+            this.addToConsole(`Analytics: ${analyticsData.totalGamePlays.toLocaleString()} total Roblox game plays`, 'success');
+            this.addToConsole(`Analytics: ${analyticsData.commitsThisWeek} GitHub commits this week`, 'success');
             
         } catch (error) {
-            content.innerHTML = '<div class="error">Unable to load social metrics</div>';
-            this.addToConsole(`Socials widget error: ${error.message}`, 'error');
+            content.innerHTML = '<div class="error">Unable to load analytics data</div>';
+            this.addToConsole(`Analytics error: ${error.message}`, 'error');
         }
     }
 
-    renderSocialMetrics(socials) {
+    renderSocialMetrics(analytics) {
         return `
             <div class="metrics-grid">
                 <div class="metric-card">
-                    <div class="metric-value">${this.formatNumber(socials.siteVisits)}</div>
-                    <div class="metric-label">Site Visits</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-value">${this.formatNumber(socials.discordMembers)}</div>
-                    <div class="metric-label">Discord</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-value">${this.formatNumber(socials.robloxMembers)}</div>
+                    <div class="metric-value">${this.formatNumber(analytics.totalGamePlays)}</div>
                     <div class="metric-label">Game Plays</div>
                 </div>
                 <div class="metric-card">
-                    <div class="metric-value">${this.formatNumber(socials.githubStars)}</div>
-                    <div class="metric-label">GitHub ⭐</div>
+                    <div class="metric-value">${analytics.commitsThisWeek}</div>
+                    <div class="metric-label">Commits This Week</div>
                 </div>
             </div>
         `;
@@ -535,21 +632,273 @@ class PelicanDashboard {
 }
 
 // Global functions for UI interactions
-function openCalendarModal() {
+async function openCalendarModal() {
     const modal = document.getElementById('calendar-modal');
-    const iframe = document.getElementById('calendar-iframe');
+    const body = modal.querySelector('.modal-body');
     
-    // Load Google Calendar in iframe
-    iframe.src = 'https://calendar.google.com/calendar/embed?mode=WEEK&showPrint=0&showTabs=0&showCalendars=0';
+    // Show modal and loading state
     modal.classList.add('active');
+    body.innerHTML = '<div class="loading">Loading calendar events...</div>';
+    
+    try {
+        console.log('Fetching full calendar events for modal...');
+        const result = await window.pelicanAPI.invoke('get-calendar-events', 14); // Next 2 weeks
+        
+        if (result.success) {
+            body.innerHTML = renderCalendarModal(result.events);
+            // Initialize feather icons for the new content
+            if (typeof feather !== 'undefined') {
+                feather.replace();
+            }
+            if (window.dashboard) {
+                window.dashboard.addToConsole(`Calendar: Loaded ${result.totalCount} events for modal`, 'success');
+            }
+        } else {
+            throw new Error(result.error || 'Failed to fetch calendar events');
+        }
+        
+    } catch (error) {
+        console.error('Calendar modal error:', error);
+        body.innerHTML = `
+            <div class="error">
+                <div class="error-title">Failed to Load Calendar</div>
+                <div class="error-message">${error.message}</div>
+                <button onclick="openCalendarModal()" class="retry-btn">Retry</button>
+            </div>
+        `;
+        if (window.dashboard) {
+            window.dashboard.addToConsole(`Calendar modal error: ${error.message}`, 'error');
+        }
+    }
 }
 
 function closeCalendarModal() {
     const modal = document.getElementById('calendar-modal');
-    const iframe = document.getElementById('calendar-iframe');
-    
     modal.classList.remove('active');
-    iframe.src = '';
+}
+
+function renderCalendarModal(events) {
+    if (events.length === 0) {
+        return '<div class="no-data">No upcoming events in the next 2 weeks</div>';
+    }
+    
+    // Group events by date
+    const eventsByDate = {};
+    events.forEach(event => {
+        const dateKey = event.start.toDateString();
+        if (!eventsByDate[dateKey]) {
+            eventsByDate[dateKey] = [];
+        }
+        eventsByDate[dateKey].push(event);
+    });
+    
+    return `
+        <div class="calendar-view">
+            ${Object.entries(eventsByDate).map(([dateKey, dayEvents]) => `
+                <div class="calendar-day">
+                    <div class="day-header">
+                        <h3>${new Date(dateKey).toLocaleDateString('en-US', { 
+                            weekday: 'long', 
+                            month: 'long', 
+                            day: 'numeric' 
+                        })}</h3>
+                        <span class="event-count">${dayEvents.length} event${dayEvents.length > 1 ? 's' : ''}</span>
+                    </div>
+                    <div class="day-events">
+                        ${dayEvents.map(event => `
+                            <div class="calendar-event-item ${event.type}">
+                                <div class="event-time-badge">
+                                    ${event.start.toLocaleTimeString('en-US', { 
+                                        hour: '2-digit', 
+                                        minute: '2-digit' 
+                                    })}
+                                </div>
+                                <div class="event-details">
+                                    <div class="event-title">${event.title}</div>
+                                    ${event.description ? `<div class="event-description">${event.description}</div>` : ''}
+                                    ${event.location ? `
+                                        <div class="event-location-full" onclick="openGoogleMaps('${event.googleMapsUrl}')">
+                                            <i data-feather="map-pin"></i>
+                                            ${event.location}
+                                        </div>
+                                    ` : ''}
+                                    <div class="event-meta">
+                                        <span class="event-duration">${event.duration} minutes</span>
+                                        <span class="event-type-badge ${event.type}">${window.dashboard.formatEventType(event.type)}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+async function openGoogleMaps(mapsUrl) {
+    if (mapsUrl) {
+        await window.pelicanAPI.openExternal(mapsUrl);
+        if (window.dashboard) {
+            window.dashboard.addToConsole(`Opened Google Maps: ${mapsUrl}`, 'info');
+        }
+    }
+}
+
+async function openEventDetails(eventId) {
+    // For now, just log the event click - could expand to show more details
+    if (window.dashboard) {
+        window.dashboard.addToConsole(`Event clicked: ${eventId}`, 'info');
+    }
+}
+
+// Google Calendar Authentication
+async function connectGoogleCalendar() {
+    try {
+        if (window.dashboard) {
+            window.dashboard.addToConsole('Starting Google Calendar authentication...', 'info');
+        }
+        
+        // Use the new streamlined OAuth flow
+        const authResult = await window.pelicanAPI.startGoogleOAuth();
+        
+        if (authResult.success) {
+            if (window.dashboard) {
+                window.dashboard.addToConsole('Google Calendar connected successfully!', 'success');
+            }
+            
+            // Refresh the calendar events
+            await updateCalendarEvents();
+        } else {
+            throw new Error(authResult.error);
+        }
+    } catch (error) {
+        console.error('Google auth error:', error);
+        if (window.dashboard) {
+            window.dashboard.addToConsole(`Google auth error: ${error.message}`, 'error');
+        }
+    }
+}
+
+// Disconnect Google Calendar
+async function disconnectGoogleCalendar() {
+    try {
+        if (window.dashboard) {
+            window.dashboard.addToConsole('Disconnecting Google Calendar...', 'info');
+        }
+        
+        const result = await window.pelicanAPI.clearGoogleAuth();
+        
+        if (result.success) {
+            if (window.dashboard) {
+                window.dashboard.addToConsole('Google Calendar disconnected successfully!', 'success');
+            }
+            
+            // Refresh the calendar widget to show the connect button again
+            await updateCalendarEvents();
+        } else {
+            throw new Error(result.error);
+        }
+    } catch (error) {
+        console.error('Google disconnect error:', error);
+        if (window.dashboard) {
+            window.dashboard.addToConsole(`Google disconnect error: ${error.message}`, 'error');
+        }
+    }
+}
+
+// Refresh calendar events
+async function refreshCalendarEvents() {
+    await updateCalendarEvents();
+    if (window.dashboard) {
+        window.dashboard.addToConsole('Calendar events refreshed', 'info');
+    }
+}
+
+function showGoogleAuthModal() {
+    // Create modal for auth code input
+    const modalHtml = `
+        <div class="modal-overlay" id="google-auth-modal" onclick="closeGoogleAuthModal()">
+            <div class="modal-content google-auth-modal-content" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h2>Google Calendar Authorization</h2>
+                    <button class="close-modal-btn" onclick="closeGoogleAuthModal()">
+                        <i data-feather="x"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="auth-instructions">
+                        <p>1. A Google authorization page should have opened in your browser</p>
+                        <p>2. Sign in to your Google account and grant calendar permissions</p>
+                        <p>3. Copy the authorization code and paste it below:</p>
+                    </div>
+                    <div class="auth-code-input">
+                        <label for="auth-code">Authorization Code:</label>
+                        <input type="text" id="auth-code" placeholder="Paste authorization code here..." />
+                        <button onclick="submitGoogleAuthCode()" class="submit-auth-btn">
+                            Connect Calendar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Add modal to document
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Show modal
+    document.getElementById('google-auth-modal').classList.add('active');
+    
+    // Initialize feather icons
+    if (typeof feather !== 'undefined') {
+        feather.replace();
+    }
+    
+    // Focus on input
+    setTimeout(() => {
+        document.getElementById('auth-code').focus();
+    }, 100);
+}
+
+function closeGoogleAuthModal() {
+    const modal = document.getElementById('google-auth-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+async function submitGoogleAuthCode() {
+    const authCodeInput = document.getElementById('auth-code');
+    const authCode = authCodeInput.value.trim();
+    
+    if (!authCode) {
+        alert('Please enter the authorization code');
+        return;
+    }
+    
+    try {
+        const result = await window.pelicanAPI.googleOAuthCallback(authCode);
+        
+        if (result.success) {
+            closeGoogleAuthModal();
+            
+            // Reload calendar widget
+            if (window.dashboard) {
+                window.dashboard.addToConsole('Google Calendar connected successfully!', 'success');
+                await window.dashboard.loadCalendarWidget();
+            }
+        } else {
+            throw new Error(result.error);
+        }
+    } catch (error) {
+        console.error('Auth code submission error:', error);
+        alert(`Error: ${error.message}`);
+        
+        if (window.dashboard) {
+            window.dashboard.addToConsole(`Auth error: ${error.message}`, 'error');
+        }
+    }
 }
 
 function openUploadModal() {
@@ -583,6 +932,117 @@ function closeUploadModal() {
     
     modal.classList.remove('active');
     input.value = '';
+}
+
+// Grades Modal Functions
+async function openGradesModal() {
+    const modal = document.getElementById('grades-modal');
+    const container = document.getElementById('grades-container');
+    
+    // Show modal and loading state
+    modal.classList.add('active');
+    container.innerHTML = '<div class="loading">Loading Canvas grades...</div>';
+    
+    try {
+        console.log('Fetching Canvas grades for modal...');
+        const result = await window.pelicanAPI.invoke('get-canvas-grades');
+        
+        if (result.success) {
+            container.innerHTML = renderGradesModal(result);
+            if (window.dashboard) {
+                window.dashboard.addToConsole(`Canvas: Loaded grades for ${result.totalCourses} courses`, 'success');
+            }
+        } else {
+            throw new Error(result.error || 'Failed to fetch Canvas grades');
+        }
+        
+    } catch (error) {
+        console.error('Grades modal error:', error);
+        container.innerHTML = `
+            <div class="error">
+                <div class="error-title">Failed to Load Grades</div>
+                <div class="error-message">${error.message}</div>
+                <button onclick="openGradesModal()" class="retry-btn">Retry</button>
+            </div>
+        `;
+        if (window.dashboard) {
+            window.dashboard.addToConsole(`Grades modal error: ${error.message}`, 'error');
+        }
+    }
+}
+
+function closeGradesModal() {
+    const modal = document.getElementById('grades-modal');
+    modal.classList.remove('active');
+}
+
+function renderGradesModal(data) {
+    const { grades, overallGPA, totalCourses } = data;
+    
+    if (grades.length === 0) {
+        return '<div class="no-data">No grade data available</div>';
+    }
+    
+    // Calculate some statistics
+    const gradesWithScores = grades.filter(g => g.currentScore !== null);
+    const avgScore = gradesWithScores.length > 0 
+        ? (gradesWithScores.reduce((sum, g) => sum + g.currentScore, 0) / gradesWithScores.length).toFixed(1)
+        : 'N/A';
+    
+    return `
+        <div class="grades-overview">
+            <div class="gpa-card">
+                <div class="gpa-value">${overallGPA ? overallGPA.toFixed(2) : 'N/A'}</div>
+                <div class="gpa-label">Estimated GPA</div>
+            </div>
+            <div class="stats-card">
+                <div class="stat-item">
+                    <span class="stat-value">${totalCourses}</span>
+                    <span class="stat-label">Courses</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value">${avgScore}%</span>
+                    <span class="stat-label">Average</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="grades-list">
+            ${grades.map(grade => `
+                <div class="grade-item" onclick="openCanvasAssignment('${grade.url}')">
+                    <div class="grade-header">
+                        <div class="course-info">
+                            <div class="course-name">${grade.courseName}</div>
+                            <div class="course-code">${grade.courseCode}</div>
+                        </div>
+                        <div class="grade-display">
+                            <div class="current-grade ${getGradeClass(grade.currentScore)}">${grade.currentGrade}</div>
+                            ${grade.currentScore !== null ? `<div class="grade-percent">${grade.currentScore.toFixed(1)}%</div>` : ''}
+                        </div>
+                    </div>
+                    ${grade.classAverage ? `
+                        <div class="grade-comparison">
+                            <div class="comparison-bar">
+                                <div class="your-score" style="width: ${Math.min(grade.currentScore || 0, 100)}%"></div>
+                                <div class="class-avg-marker" style="left: ${Math.min(grade.classAverage, 100)}%">
+                                    <span class="avg-label">Class: ${grade.classAverage}%</span>
+                                </div>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function getGradeClass(score) {
+    if (score === null) return 'grade-na';
+    if (score >= 90) return 'grade-a';
+    if (score >= 80) return 'grade-b';
+    if (score >= 70) return 'grade-c';
+    if (score >= 60) return 'grade-d';
+    return 'grade-f';
 }
 
 async function processUploadLink() {
@@ -675,6 +1135,16 @@ async function openAssignment(url) {
         await window.pelicanAPI.openExternal(url);
         if (window.dashboard) {
             window.dashboard.addToConsole(`Opened assignment: ${url}`, 'info');
+        }
+    }
+}
+
+// Canvas assignment clicking functionality
+async function openCanvasAssignment(url) {
+    if (url && url !== '#') {
+        await window.pelicanAPI.openExternal(url);
+        if (window.dashboard) {
+            window.dashboard.addToConsole(`Opened Canvas assignment: ${url}`, 'info');
         }
     }
 }

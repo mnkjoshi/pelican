@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld('pelicanAPI', {
   // App usage tracking
   getUsageData: () => ipcRenderer.invoke('get-usage-data'),
   
+  // Analytics data (Roblox + GitHub)
+  getAnalyticsData: () => ipcRenderer.invoke('get-analytics-data'),
+  
   // Service monitoring
   checkServiceStatus: (services) => ipcRenderer.invoke('check-service-status', services),
   
@@ -25,6 +28,22 @@ contextBridge.exposeInMainWorld('pelicanAPI', {
   downloadYouTubeAudio: (url) => ipcRenderer.invoke('download-youtube-audio', url),
   copyAudioFile: (filePath, fileName) => ipcRenderer.invoke('copy-audio-file', filePath, fileName),
   musicControl: (action, data) => ipcRenderer.invoke('music-control', action, data),
+  
+  // Canvas LMS integration
+  getCanvasDeadlines: (daysAhead) => ipcRenderer.invoke('get-canvas-deadlines', daysAhead),
+  getCanvasCourses: () => ipcRenderer.invoke('get-canvas-courses'),
+  getCanvasGrades: () => ipcRenderer.invoke('get-canvas-grades'),
+  
+  // Calendar integration
+  getCalendarEvents: (daysAhead) => ipcRenderer.invoke('get-calendar-events', daysAhead),
+  getGoogleAuthUrl: () => ipcRenderer.invoke('get-google-auth-url'),
+  startGoogleOAuth: () => ipcRenderer.invoke('start-google-oauth'),
+  googleOAuthCallback: (authCode) => ipcRenderer.invoke('google-oauth-callback', authCode),
+  checkGoogleAuth: () => ipcRenderer.invoke('check-google-auth'),
+  clearGoogleAuth: () => ipcRenderer.invoke('clear-google-auth'),
+  
+  // Generic invoke for backward compatibility
+  invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
   
   // Event listeners
   onServiceUpdate: (callback) => ipcRenderer.on('service-check-update', callback),

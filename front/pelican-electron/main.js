@@ -5,6 +5,9 @@ const axios = require('axios')
 const cron = require('node-cron')
 const { spawn } = require('child_process')
 const fs = require('fs').promises
+
+// Load environment variables
+require('dotenv').config()
 // Use yt-dlp for reliable YouTube downloads
 let ytDlpExec = null
 let ffmpegPath = null
@@ -185,8 +188,176 @@ ipcMain.handle('get-usage-data', async () => {
     }
 })
 
+// Analytics data (Roblox + GitHub) - replaces social metrics
+ipcMain.handle('get-analytics-data', async () => {
+    try {
+        console.log('Fetching Roblox game visits and GitHub commits...')
+        
+        // Roblox universe IDs (correct IDs for the API)
+        const universeIds = '4443400918,4537025162,2940682045'
+        const gameNames = {
+            '4443400918': 'Universe',
+            '4537025162': 'Murder vs Sheriff Mode MM2 Duels', 
+            '2940682045': 'Squid Game'
+        }
+        
+        // Fetch Roblox game visits using the correct API
+        let totalGamePlays = 0
+        try {
+            console.log('Fetching Roblox game data...')
+            const robloxUrl = `https://games.roblox.com/v1/games?universeIds=${universeIds}`
+            console.log(`Roblox API URL: ${robloxUrl}`)
+            
+            const robloxResponse = await axios.get(robloxUrl, {
+                timeout: 10000,
+                headers: {
+                    'accept': 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            })
+            
+            console.log('Roblox API response:', robloxResponse.data)
+            
+            if (robloxResponse.data && robloxResponse.data.data) {
+                robloxResponse.data.data.forEach(game => {
+                    const gameName = gameNames[game.id] || `Game ${game.id}`
+                    const visits = game.visits || 0
+                    console.log(`${gameName}: ${visits.toLocaleString()} visits`)
+                    totalGamePlays += visits
+                })
+            }
+            
+            console.log(`Total Roblox game plays: ${totalGamePlays.toLocaleString()}`)
+        } catch (robloxError) {
+            console.error('Failed to fetch Roblox data:', robloxError.message)
+            // Use fallback mock data if API fails
+            totalGamePlays = 7450000 // Mock total
+            console.log('Using fallback mock data for Roblox games')
+        }
+        
+        console.log(`Total game plays: ${totalGamePlays.toLocaleString()}`)
+        
+        // Fetch GitHub commits this week for user mnkjoshi
+        let commitsThisWeek = 0
+        try {
+            console.log('Fetching GitHub commits for mnkjoshi...')
+            const oneWeekAgo = new Date()
+            oneWeekAgo.setDate(oneWeekAgo.getDate() - 7)
+            const since = oneWeekAgo.toISOString()
+            
+            // Get user's repositories
+            const reposResponse = await axios.get('https://api.github.com/users/mnkjoshi/repos?per_page=100&sort=pushed')
+            const repos = reposResponse.data
+            
+            if (Array.isArray(repos)) {
+                console.log(`Found ${repos.length} repositories for mnkjoshi`)
+                
+                // Fetch commits for each repo in parallel (limit to 10 most recent)
+                const commitPromises = repos.slice(0, 10).map(async (repo) => {
+                    try {
+                        const commitsResponse = await axios.get(
+                            `https://api.github.com/repos/${repo.full_name}/commits?author=mnkjoshi&since=${since}&per_page=100`
+                        )
+                        const commits = commitsResponse.data
+                        console.log(`${repo.name}: ${commits.length} commits this week`)
+                        return commits.length
+                    } catch (error) {
+                        console.error(`Failed to fetch commits for ${repo.name}:`, error.message)
+                        return 0
+                    }
+                })
+                
+                const commitCounts = await Promise.all(commitPromises)
+                commitsThisWeek = commitCounts.reduce((sum, count) => sum + count, 0)
+            }
+        } catch (error) {
+            console.error('Failed to fetch GitHub commits:', error.message)
+        }
+        
+        console.log(`Commits this week: ${commitsThisWeek}`)
+        
+        // Return analytics data in the format expected by socials widget
+        return {
+            totalGamePlays: totalGamePlays,
+            commitsThisWeek: commitsThisWeek,
+            // Placeholder values for other metrics if needed
+            siteVisits: 0,
+            discordMembers: 0
+        }
+        
+    } catch (error) {
+        console.error('Failed to fetch analytics data:', error.message)
+        return {
+            totalGamePlays: 0,
+            commitsThisWeek: 0,
+            siteVisits: 0,
+            discordMembers: 0
+        }
+    }
+})
+
 // Service status tracking with uptime
 const serviceStatusHistory = new Map()
+
+// Initialize default services
+function initializeDefaultServices() {
+    const defaultServices = [
+        {
+            name: 'Golden Hind',
+            url: 'https://golden-hind.onrender.com/',
+            description: 'Golden Hind Service API',
+            type: 'api'
+        },
+        {
+            name: 'Stellar Resolution',
+            url: 'https://stellar-resolution.onrender.com/unwise-labels/getLabels',
+            description: 'Stellar Resolution Unwise Labels API',
+            type: 'api'
+        }
+    ]
+    
+    // List of placeholder/test services to remove
+    const placeholderServices = [
+        'Portfolio Site',
+        'Discord Bot', 
+        'Backend API',
+        'Test Service',
+        'Example Service'
+    ]
+    
+    // Get existing services
+    const existingServices = store.get('services', [])
+    
+    // Remove placeholder services
+    const cleanedServices = existingServices.filter(service => {
+        if (placeholderServices.includes(service.name) || 
+            (service.url && service.url.includes('httpstat.us'))) {
+            console.log(`Removing placeholder service: ${service.name}`)
+            // Also clean up from status history
+            serviceStatusHistory.delete(service.name)
+            return false
+        }
+        return true
+    })
+    
+    // Add new services if they don't exist
+    let servicesUpdated = cleanedServices.length !== existingServices.length
+    defaultServices.forEach(defaultService => {
+        const exists = cleanedServices.find(service => service.name === defaultService.name)
+        if (!exists) {
+            cleanedServices.push(defaultService)
+            servicesUpdated = true
+            console.log(`Added new service to monitor: ${defaultService.name}`)
+        }
+    })
+    
+    if (servicesUpdated) {
+        store.set('services', cleanedServices)
+        console.log('Updated services configuration - removed placeholders and added new services')
+    }
+    
+    console.log(`Monitoring ${cleanedServices.length} services:`, cleanedServices.map(s => s.name).join(', '))
+}
 
 ipcMain.handle('check-service-status', async (event, services) => {
     const results = []
@@ -194,8 +365,16 @@ ipcMain.handle('check-service-status', async (event, services) => {
     for (const service of services) {
         const startTime = Date.now()
         try {
-            const response = await axios.get(service.url, { timeout: 5000 })
-            const currentStatus = response.status === 200 ? 'online' : 'degraded'
+            console.log(`Checking service: ${service.name} at ${service.url}`)
+            const response = await axios.get(service.url, { 
+                timeout: 10000, // Increase timeout for Render services (they can be slow to wake up)
+                headers: {
+                    'User-Agent': 'Pelican-Command-Center/1.0.0'
+                }
+            })
+            
+            // Consider 2xx status codes as online
+            const currentStatus = (response.status >= 200 && response.status < 300) ? 'online' : 'degraded'
             
             // Update status history
             const history = serviceStatusHistory.get(service.name) || { 
@@ -211,11 +390,16 @@ ipcMain.handle('check-service-status', async (event, services) => {
             history.lastCheck = startTime
             serviceStatusHistory.set(service.name, history)
             
+            const responseTime = Date.now() - startTime
+            console.log(`Service ${service.name}: ${currentStatus} (${responseTime}ms, status: ${response.status})`)
+            
             results.push({
                 name: service.name,
                 status: currentStatus,
-                responseTime: Date.now() - startTime,
-                uptime: Math.floor((startTime - history.since) / 1000) // seconds
+                responseTime: responseTime,
+                uptime: Math.floor((startTime - history.since) / 1000), // seconds
+                statusCode: response.status,
+                url: service.url
             })
         } catch (error) {
             // Update status history for offline
@@ -232,12 +416,15 @@ ipcMain.handle('check-service-status', async (event, services) => {
             history.lastCheck = startTime
             serviceStatusHistory.set(service.name, history)
             
+            console.log(`Service ${service.name}: offline (${error.message})`)
+            
             results.push({
                 name: service.name,
                 status: 'offline',
                 responseTime: null,
                 error: error.message,
-                downtime: Math.floor((startTime - history.since) / 1000) // seconds
+                downtime: Math.floor((startTime - history.since) / 1000), // seconds
+                url: service.url
             })
         }
     }
@@ -592,24 +779,735 @@ ipcMain.handle('window-control', (event, action) => {
     }
 })
 
-// Schedule periodic service checks
-let serviceCheckInterval = null
+// Schedule periodic service checks with random intervals
+let serviceCheckTimeout = null
+
+const scheduleNextServiceCheck = () => {
+    // Random interval between 7-15 minutes (in milliseconds)
+    const minInterval = 7 * 60 * 1000  // 7 minutes
+    const maxInterval = 15 * 60 * 1000 // 15 minutes
+    const randomInterval = Math.floor(Math.random() * (maxInterval - minInterval + 1)) + minInterval
+    
+    const intervalMinutes = (randomInterval / (60 * 1000)).toFixed(1)
+    console.log(`Next service check scheduled in ${intervalMinutes} minutes`)
+    
+    serviceCheckTimeout = trackTimeout(() => {
+        const services = store.get('services', [])
+        if (services.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
+            console.log('Performing scheduled service check...')
+            mainWindow.webContents.send('service-check-update')
+        }
+        
+        // Schedule the next check with a new random interval
+        scheduleNextServiceCheck()
+    }, randomInterval, `Service Check (${intervalMinutes}min)`)
+}
 
 const startServiceMonitoring = () => {
     try {
-        serviceCheckInterval = cron.schedule('*/30 * * * * *', () => {
-            const services = store.get('services', [])
-            if (services.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('service-check-update')
-            }
-        }, {
-            scheduled: true,
-            timezone: "America/New_York"
-        })
+        console.log('Starting randomized service monitoring (7-15 minute intervals)')
+        
+        // Perform an initial check immediately
+        const services = store.get('services', [])
+        if (services.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
+            console.log('Performing initial service check...')
+            mainWindow.webContents.send('service-check-update')
+        }
+        
+        // Schedule the first random check
+        scheduleNextServiceCheck()
     } catch (error) {
         console.error('Failed to start service monitoring:', error)
     }
 }
+
+// Canvas LMS API Integration
+const CANVAS_API_TOKEN = process.env.CANVAS_API_TOKEN
+const CANVAS_BASE_URL = process.env.CANVAS_BASE_URL
+
+// Helper function to make Canvas API requests
+async function canvasApiRequest(endpoint) {
+    try {
+        const url = `${CANVAS_BASE_URL}/api/v1${endpoint}`
+        console.log(`Making Canvas API request: ${url}`)
+        
+        const response = await axios.get(url, {
+            headers: {
+                'Authorization': `Bearer ${CANVAS_API_TOKEN}`,
+                'Accept': 'application/json'
+            },
+            timeout: 10000
+        })
+        
+        return response.data
+    } catch (error) {
+        console.error('Canvas API request failed:', error.message)
+        throw error
+    }
+}
+
+// Get Canvas assignments with upcoming deadlines
+ipcMain.handle('get-canvas-deadlines', async (event, daysAhead = 7) => {
+    try {
+        if (!CANVAS_API_TOKEN || !CANVAS_BASE_URL) {
+            throw new Error('Canvas API credentials not configured')
+        }
+
+        console.log(`Fetching Canvas deadlines for next ${daysAhead} days...`)
+        
+        // Get current user's courses
+        const courses = await canvasApiRequest('/courses?enrollment_state=active')
+        console.log(`Found ${courses.length} active courses`)
+        
+        const deadlines = []
+        const now = new Date()
+        const futureDate = new Date(now.getTime() + (daysAhead * 24 * 60 * 60 * 1000))
+        
+        for (const course of courses) {
+            try {
+                // Get assignments for each course
+                const assignments = await canvasApiRequest(`/courses/${course.id}/assignments`)
+                
+                // Get all submissions for the current user in this course (more efficient)
+                let userSubmissions = {}
+                try {
+                    const submissions = await canvasApiRequest(`/courses/${course.id}/students/submissions?student_ids[]=self&per_page=100`)
+                    if (Array.isArray(submissions)) {
+                        submissions.forEach(submission => {
+                            userSubmissions[submission.assignment_id] = submission.workflow_state !== 'unsubmitted'
+                        })
+                    }
+                } catch (submissionError) {
+                    console.warn(`Could not get submissions for course ${course.name}:`, submissionError.message)
+                }
+
+                for (const assignment of assignments) {
+                    if (assignment.due_at) {
+                        const dueDate = new Date(assignment.due_at)
+                        
+                        // Check if assignment is due within the specified timeframe
+                        if (dueDate >= now && dueDate <= futureDate) {
+                            // Check user's specific submission status from batch data
+                            const userSubmitted = userSubmissions[assignment.id] || false
+
+                            deadlines.push({
+                                id: assignment.id,
+                                title: assignment.name,
+                                course: course.name,
+                                courseCode: course.course_code,
+                                dueDate: assignment.due_at,
+                                dueDateFormatted: dueDate.toLocaleDateString('en-US', {
+                                    weekday: 'short',
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                }),
+                                url: assignment.html_url,
+                                points: assignment.points_possible,
+                                submitted: userSubmitted,
+                                description: assignment.description ? assignment.description.substring(0, 200) + '...' : 'No description'
+                            })
+                        }
+                    }
+                }
+                
+                // Small delay between API calls to be respectful
+                await new Promise(resolve => setTimeout(resolve, 100))
+                
+            } catch (courseError) {
+                console.warn(`Failed to get assignments for course ${course.name}:`, courseError.message)
+            }
+        }
+        
+        // Sort deadlines by due date
+        deadlines.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
+        
+        console.log(`Found ${deadlines.length} upcoming deadlines`)
+        return {
+            success: true,
+            deadlines: deadlines,
+            totalCount: deadlines.length,
+            daysAhead: daysAhead
+        }
+        
+    } catch (error) {
+        console.error('Failed to fetch Canvas deadlines:', error.message)
+        return {
+            success: false,
+            error: error.message,
+            deadlines: []
+        }
+    }
+})
+
+// Get Canvas course information
+ipcMain.handle('get-canvas-courses', async () => {
+    try {
+        if (!CANVAS_API_TOKEN || !CANVAS_BASE_URL) {
+            throw new Error('Canvas API credentials not configured')
+        }
+
+        const courses = await canvasApiRequest('/courses?enrollment_state=active&per_page=50')
+        
+        const courseInfo = courses.map(course => ({
+            id: course.id,
+            name: course.name,
+            courseCode: course.course_code,
+            term: course.term ? course.term.name : 'Unknown',
+            url: course.course_code ? `${CANVAS_BASE_URL}/courses/${course.id}` : null,
+            enrollmentType: course.enrollments ? course.enrollments[0]?.type : 'student'
+        }))
+        
+        console.log(`Retrieved ${courseInfo.length} active courses`)
+        return {
+            success: true,
+            courses: courseInfo
+        }
+        
+    } catch (error) {
+        console.error('Failed to fetch Canvas courses:', error.message)
+        return {
+            success: false,
+            error: error.message,
+            courses: []
+        }
+    }
+})
+
+// Get Canvas grades for all courses
+ipcMain.handle('get-canvas-grades', async () => {
+    try {
+        if (!CANVAS_API_TOKEN || !CANVAS_BASE_URL) {
+            throw new Error('Canvas API credentials not configured')
+        }
+
+        console.log('Fetching Canvas grades...')
+        
+        // Get current user's courses with grades
+        const courses = await canvasApiRequest('/courses?enrollment_state=active&include[]=total_scores&include[]=current_grading_period_scores&per_page=50')
+        console.log(`Found ${courses.length} active courses for grades`)
+        
+        const gradesData = []
+        
+        for (const course of courses) {
+            try {
+                // Get detailed enrollment info for this course
+                const enrollments = await canvasApiRequest(`/courses/${course.id}/enrollments?user_id=self&include[]=current_score&include[]=final_score`)
+                
+                let userEnrollment = null
+                if (Array.isArray(enrollments) && enrollments.length > 0) {
+                    userEnrollment = enrollments[0]
+                }
+                
+                // Get course analytics if available (class averages)
+                let classStats = null
+                try {
+                    const analytics = await canvasApiRequest(`/courses/${course.id}/analytics/assignments`)
+                    if (analytics && analytics.length > 0) {
+                        const totalPoints = analytics.reduce((sum, assignment) => sum + (assignment.points_possible || 0), 0)
+                        const avgPoints = analytics.reduce((sum, assignment) => sum + (assignment.avg_score || 0), 0)
+                        classStats = {
+                            classAverage: totalPoints > 0 ? ((avgPoints / totalPoints) * 100).toFixed(1) : null
+                        }
+                    }
+                } catch (analyticsError) {
+                    console.warn(`Could not get analytics for course ${course.name}:`, analyticsError.message)
+                }
+                
+                // Build grade info
+                const gradeInfo = {
+                    courseId: course.id,
+                    courseName: course.name,
+                    courseCode: course.course_code || course.name,
+                    currentScore: userEnrollment?.current_score || null,
+                    finalScore: userEnrollment?.final_score || null,
+                    currentGrade: userEnrollment?.current_grade || 'N/A',
+                    finalGrade: userEnrollment?.final_grade || 'N/A',
+                    classAverage: classStats?.classAverage || null,
+                    url: `${CANVAS_BASE_URL}/courses/${course.id}/grades`,
+                    term: course.term ? course.term.name : 'Current Term'
+                }
+                
+                gradesData.push(gradeInfo)
+                
+                // Small delay between API calls
+                await new Promise(resolve => setTimeout(resolve, 150))
+                
+            } catch (courseError) {
+                console.warn(`Failed to get grades for course ${course.name}:`, courseError.message)
+                // Still add course with minimal info
+                gradesData.push({
+                    courseId: course.id,
+                    courseName: course.name,
+                    courseCode: course.course_code || course.name,
+                    currentScore: null,
+                    finalScore: null,
+                    currentGrade: 'Error',
+                    finalGrade: 'Error',
+                    classAverage: null,
+                    url: `${CANVAS_BASE_URL}/courses/${course.id}/grades`,
+                    term: course.term ? course.term.name : 'Current Term'
+                })
+            }
+        }
+        
+        // Calculate overall GPA if possible
+        let overallGPA = null
+        const validGrades = gradesData.filter(grade => grade.currentScore !== null)
+        if (validGrades.length > 0) {
+            const totalPoints = validGrades.reduce((sum, grade) => sum + grade.currentScore, 0)
+            const averagePercent = totalPoints / validGrades.length
+            
+            // Convert percentage to 4.0 scale (rough approximation)
+            if (averagePercent >= 97) overallGPA = 4.0
+            else if (averagePercent >= 93) overallGPA = 3.7
+            else if (averagePercent >= 90) overallGPA = 3.3
+            else if (averagePercent >= 87) overallGPA = 3.0
+            else if (averagePercent >= 83) overallGPA = 2.7
+            else if (averagePercent >= 80) overallGPA = 2.3
+            else if (averagePercent >= 77) overallGPA = 2.0
+            else if (averagePercent >= 73) overallGPA = 1.7
+            else if (averagePercent >= 70) overallGPA = 1.3
+            else if (averagePercent >= 67) overallGPA = 1.0
+            else if (averagePercent >= 65) overallGPA = 0.7
+            else overallGPA = 0.0
+        }
+        
+        console.log(`Retrieved grades for ${gradesData.length} courses`)
+        return {
+            success: true,
+            grades: gradesData,
+            overallGPA: overallGPA,
+            totalCourses: gradesData.length
+        }
+        
+    } catch (error) {
+        console.error('Failed to fetch Canvas grades:', error.message)
+        return {
+            success: false,
+            error: error.message,
+            grades: []
+        }
+    }
+})
+
+// Google Calendar API Integration with OAuth 2.0
+const { google } = require('googleapis')
+const GOOGLE_OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID
+const GOOGLE_OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET
+const GOOGLE_CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID || 'primary'
+
+// OAuth 2.0 configuration
+const oauth2Client = new google.auth.OAuth2(
+    GOOGLE_OAUTH_CLIENT_ID,
+    GOOGLE_OAUTH_CLIENT_SECRET, // Client secret is required for token exchange
+    'http://localhost:3000/callback' // Use localhost with specific port and path
+)
+
+// Store for access tokens
+let googleAccessToken = null
+
+// Simple HTTP server to handle OAuth callback
+const http = require('http')
+let callbackServer = null
+
+function startCallbackServer() {
+    return new Promise((resolve, reject) => {
+        callbackServer = http.createServer((req, res) => {
+            if (req.url.startsWith('/callback')) {
+                const url = new URL(req.url, 'http://localhost:3000')
+                const authCode = url.searchParams.get('code')
+                const error = url.searchParams.get('error')
+                
+                if (error) {
+                    res.writeHead(400, { 'Content-Type': 'text/html' })
+                    res.end(`<html><body><h1>Authorization Error</h1><p>${error}</p><p>You can close this window.</p></body></html>`)
+                    reject(new Error(error))
+                    return
+                }
+                
+                if (authCode) {
+                    res.writeHead(200, { 'Content-Type': 'text/html' })
+                    res.end(`<html><body><h1>Authorization Successful!</h1><p>You can close this window and return to Pelican.</p></body></html>`)
+                    resolve(authCode)
+                } else {
+                    res.writeHead(400, { 'Content-Type': 'text/html' })
+                    res.end(`<html><body><h1>Authorization Error</h1><p>No authorization code received.</p><p>You can close this window.</p></body></html>`)
+                    reject(new Error('No authorization code received'))
+                }
+            } else {
+                res.writeHead(404, { 'Content-Type': 'text/html' })
+                res.end(`<html><body><h1>404 Not Found</h1></body></html>`)
+            }
+        })
+        
+        callbackServer.listen(3000, 'localhost', () => {
+            console.log('OAuth callback server started on http://localhost:3000')
+        })
+    })
+}
+
+function stopCallbackServer() {
+    if (callbackServer) {
+        callbackServer.close()
+        callbackServer = null
+        console.log('OAuth callback server stopped')
+    }
+}
+
+// Helper function to classify event types based on title/description
+function classifyEventType(title, description) {
+    const titleLower = title.toLowerCase()
+    const descLower = (description || '').toLowerCase()
+    const combined = `${titleLower} ${descLower}`
+    
+    if (combined.includes('exam') || combined.includes('test') || combined.includes('quiz')) return 'exam'
+    if (combined.includes('lecture') || combined.includes('class') || combined.includes('lab') || combined.includes('tutorial')) return 'class'
+    if (combined.includes('meeting') || combined.includes('standup') || combined.includes('sync')) return 'meeting'
+    if (combined.includes('study') || combined.includes('review') || combined.includes('homework')) return 'study'
+    if (combined.includes('seminar') || combined.includes('workshop') || combined.includes('conference')) return 'seminar'
+    if (combined.includes('coffee') || combined.includes('lunch') || combined.includes('dinner') || combined.includes('friend')) return 'personal'
+    
+    return 'default'
+}
+
+// Complete Google OAuth flow with automatic callback handling
+ipcMain.handle('start-google-oauth', async () => {
+    try {
+        if (!GOOGLE_OAUTH_CLIENT_ID) {
+            throw new Error('Google OAuth Client ID not configured')
+        }
+
+        // Start the callback server
+        console.log('Starting OAuth callback server...')
+        const authCodePromise = startCallbackServer()
+
+        // Generate the authorization URL
+        const authUrl = oauth2Client.generateAuthUrl({
+            access_type: 'offline',
+            scope: [
+                'https://www.googleapis.com/auth/calendar.readonly',
+                'https://www.googleapis.com/auth/calendar.calendarlist.readonly'
+            ],
+            prompt: 'consent'
+        })
+
+        console.log('Generated Google OAuth URL, opening in browser...')
+        
+        // Open the authorization URL in the default browser
+        const { shell } = require('electron')
+        await shell.openExternal(authUrl)
+
+        // Wait for the callback server to receive the authorization code
+        const authCode = await authCodePromise
+        console.log('Received authorization code from callback')
+
+        // Stop the callback server
+        stopCallbackServer()
+
+        // Exchange the authorization code for tokens
+        console.log('Exchanging authorization code for access token...')
+        const { tokens } = await oauth2Client.getToken(authCode)
+        
+        oauth2Client.setCredentials(tokens)
+        googleAccessToken = tokens.access_token
+        
+        // Store refresh token if available (for future use)
+        if (tokens.refresh_token) {
+            await store.set('google_refresh_token', tokens.refresh_token)
+        }
+
+        console.log('Successfully obtained Google access token')
+        return {
+            success: true,
+            message: 'Google Calendar connected successfully!'
+        }
+    } catch (error) {
+        console.error('Failed to complete Google OAuth:', error.message)
+        stopCallbackServer() // Make sure to stop the server on error
+        return {
+            success: false,
+            error: error.message
+        }
+    }
+})
+
+// Get Google OAuth authorization URL (legacy - keeping for compatibility)
+ipcMain.handle('get-google-auth-url', async () => {
+    try {
+        if (!GOOGLE_OAUTH_CLIENT_ID) {
+            throw new Error('Google OAuth Client ID not configured')
+        }
+
+        const authUrl = oauth2Client.generateAuthUrl({
+            access_type: 'offline',
+            scope: [
+                'https://www.googleapis.com/auth/calendar.readonly',
+                'https://www.googleapis.com/auth/calendar.calendarlist.readonly'
+            ],
+            prompt: 'consent'
+        })
+
+        console.log('Generated Google OAuth URL')
+        return {
+            success: true,
+            authUrl: authUrl
+        }
+    } catch (error) {
+        console.error('Failed to generate Google auth URL:', error.message)
+        return {
+            success: false,
+            error: error.message
+        }
+    }
+})
+
+// Exchange authorization code for access token
+ipcMain.handle('google-oauth-callback', async (event, authCode) => {
+    try {
+        if (!authCode) {
+            throw new Error('Authorization code is required')
+        }
+
+        console.log('Exchanging authorization code for access token...')
+        const { tokens } = await oauth2Client.getToken(authCode)
+        
+        oauth2Client.setCredentials(tokens)
+        googleAccessToken = tokens.access_token
+        
+        // Store refresh token if available (for future use)
+        if (tokens.refresh_token) {
+            await store.set('google_refresh_token', tokens.refresh_token)
+        }
+
+        console.log('Successfully obtained Google access token')
+        return {
+            success: true,
+            message: 'Google Calendar connected successfully!'
+        }
+    } catch (error) {
+        console.error('Failed to exchange authorization code:', error.message)
+        return {
+            success: false,
+            error: error.message
+        }
+    }
+})
+
+// Check if Google Calendar is authenticated
+ipcMain.handle('check-google-auth', async () => {
+    try {
+        // Try to load existing refresh token
+        const refreshToken = await store.get('google_refresh_token')
+        if (refreshToken) {
+            oauth2Client.setCredentials({
+                refresh_token: refreshToken
+            })
+            
+            // Try to refresh the access token
+            const { credentials } = await oauth2Client.refreshAccessToken()
+            oauth2Client.setCredentials(credentials)
+            googleAccessToken = credentials.access_token
+            
+            return { authenticated: true }
+        }
+        
+        return { authenticated: false }
+    } catch (error) {
+        console.log('No valid Google authentication found')
+        return { authenticated: false }
+    }
+})
+
+// Clear Google Calendar authentication
+ipcMain.handle('clear-google-auth', async () => {
+    try {
+        console.log('Clearing Google Calendar authentication...')
+        
+        // Clear in-memory tokens
+        googleAccessToken = null
+        oauth2Client.setCredentials({})
+        
+        // Remove stored refresh token
+        await store.delete('google_refresh_token')
+        
+        console.log('Google Calendar authentication cleared successfully')
+        return {
+            success: true,
+            message: 'Google Calendar authentication cleared successfully'
+        }
+    } catch (error) {
+        console.error('Failed to clear Google authentication:', error.message)
+        return {
+            success: false,
+            error: error.message
+        }
+    }
+})
+
+ipcMain.handle('get-calendar-events', async (event, daysAhead = 7) => {
+    try {
+        if (!GOOGLE_OAUTH_CLIENT_ID) {
+            throw new Error('Google OAuth Client ID not configured. Please set GOOGLE_OAUTH_CLIENT_ID in .env file.')
+        }
+
+        if (!googleAccessToken && !oauth2Client.credentials.access_token) {
+            throw new Error('Google Calendar not authenticated. Please connect your Google account first.')
+        }
+
+        console.log(`Fetching events from ALL Google Calendars for next ${daysAhead} days...`)
+        
+        const now = new Date()
+        const futureDate = new Date(now.getTime() + (daysAhead * 24 * 60 * 60 * 1000))
+        
+        // Create calendar API client
+        const calendar = google.calendar({ version: 'v3', auth: oauth2Client })
+        
+        // First, get list of all calendars
+        console.log('Fetching calendar list...')
+        const calendarListResponse = await calendar.calendarList.list()
+        const calendars = calendarListResponse.data.items || []
+        
+        console.log(`Found ${calendars.length} calendars:`)
+        calendars.forEach(cal => {
+            console.log(`  - ${cal.summary} (${cal.id}) - Access: ${cal.accessRole}`)
+        })
+        
+        // Filter to only calendars we can read from
+        const readableCalendars = calendars.filter(cal => 
+            cal.accessRole === 'owner' || 
+            cal.accessRole === 'reader' || 
+            cal.accessRole === 'writer'
+        )
+        
+        console.log(`Fetching events from ${readableCalendars.length} readable calendars...`)
+        
+        // Fetch events from all calendars in parallel
+        const eventPromises = readableCalendars.map(async (cal) => {
+            try {
+                console.log(`Fetching events from: ${cal.summary}`)
+                const response = await calendar.events.list({
+                    calendarId: cal.id,
+                    timeMin: now.toISOString(),
+                    timeMax: futureDate.toISOString(),
+                    singleEvents: true,
+                    orderBy: 'startTime',
+                    maxResults: 50
+                })
+                
+                const events = response.data.items || []
+                console.log(`  → Found ${events.length} events in ${cal.summary}`)
+                
+                // Add calendar info to each event
+                return events.map(event => ({
+                    ...event,
+                    calendarName: cal.summary,
+                    calendarId: cal.id,
+                    calendarColor: cal.backgroundColor || cal.foregroundColor || '#1976d2'
+                }))
+            } catch (error) {
+                console.error(`Failed to fetch events from calendar "${cal.summary}":`, error.message)
+                return [] // Return empty array for failed calendars
+            }
+        })
+        
+        // Wait for all calendar requests to complete
+        const eventArrays = await Promise.all(eventPromises)
+        const allEvents = eventArrays.flat()
+        
+        console.log(`Retrieved total of ${allEvents.length} events from all calendars`)
+        
+        if (allEvents.length === 0) {
+            console.log('No calendar events found across all calendars')
+            return {
+                success: true,
+                events: [],
+                totalCount: 0,
+                daysAhead: daysAhead,
+                calendarsChecked: readableCalendars.length
+            }
+        }
+        
+        // Process and format events
+        const upcomingEvents = allEvents
+            .filter(item => item.start && (item.start.dateTime || item.start.date))
+            .map(item => {
+                // Handle both date and dateTime events
+                const startDateTime = item.start.dateTime ? new Date(item.start.dateTime) : new Date(item.start.date)
+                const endDateTime = item.end.dateTime ? new Date(item.end.dateTime) : new Date(item.end.date)
+                
+                const eventType = classifyEventType(item.summary || 'Untitled Event', item.description)
+                
+                return {
+                    id: item.id,
+                    title: item.summary || 'Untitled Event',
+                    description: item.description || '',
+                    start: startDateTime,
+                    end: endDateTime,
+                    location: item.location || '',
+                    type: eventType,
+                    attendees: (item.attendees || []).map(attendee => attendee.email).filter(Boolean),
+                    htmlLink: item.htmlLink,
+                    calendarName: item.calendarName,
+                    calendarId: item.calendarId,
+                    calendarColor: item.calendarColor,
+                    startFormatted: startDateTime.toLocaleDateString('en-US', {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    }),
+                    endFormatted: endDateTime.toLocaleDateString('en-US', {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    }),
+                    duration: Math.round((endDateTime - startDateTime) / (1000 * 60)), // duration in minutes
+                    isToday: startDateTime.toDateString() === now.toDateString(),
+                    isUpcoming: startDateTime > now,
+                    googleMapsUrl: item.location ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.location)}` : null
+                }
+            })
+            .filter(event => event.isUpcoming)
+            .sort((a, b) => a.start - b.start)
+        
+        console.log(`Processed ${upcomingEvents.length} upcoming events from ${readableCalendars.length} calendars`)
+        return {
+            success: true,
+            events: upcomingEvents,
+            totalCount: upcomingEvents.length,
+            daysAhead: daysAhead,
+            calendarsChecked: readableCalendars.length,
+            calendarNames: readableCalendars.map(cal => cal.summary)
+        }
+        
+    } catch (error) {
+        console.error('Failed to fetch Google Calendar events:', error.message)
+        
+        // Provide helpful error messages
+        let errorMessage = error.message
+        if (error.code === 401) {
+            errorMessage = 'Google Calendar authentication expired. Please reconnect your Google account.'
+        } else if (error.code === 403) {
+            errorMessage = 'Google Calendar API access denied. Please check your permissions.'
+        } else if (error.code === 404) {
+            errorMessage = 'Google Calendar not found. Please check your calendar ID.'
+        } else if (error.code === 'ENOTFOUND') {
+            errorMessage = 'Unable to connect to Google Calendar API. Please check your internet connection.'
+        }
+        
+        return {
+            success: false,
+            error: errorMessage,
+            events: [],
+            needsAuth: error.code === 401 || error.message.includes('not authenticated')
+        }
+    }
+})
 
 // File copy handler for manual audio file uploads
 ipcMain.handle('copy-audio-file', async (event, filePath, fileName) => {
@@ -649,6 +1547,7 @@ app.whenReady().then(() => {
     
     createWindow()
     startAppTracker()
+    initializeDefaultServices()
     startServiceMonitoring()
     
     // Auto-load default music folder after window is ready
@@ -718,6 +1617,46 @@ ipcMain.handle('cleanup-resources', () => {
     return { success: true, message: 'Cleanup completed' }
 })
 
+// Get list of monitored services
+ipcMain.handle('get-services', () => {
+    const services = store.get('services', [])
+    console.log(`Returning ${services.length} monitored services`)
+    return services
+})
+
+// Add a new service to monitor
+ipcMain.handle('add-service', (event, service) => {
+    const services = store.get('services', [])
+    
+    // Check if service already exists
+    const exists = services.find(s => s.name === service.name || s.url === service.url)
+    if (exists) {
+        return { success: false, message: 'Service already exists' }
+    }
+    
+    services.push(service)
+    store.set('services', services)
+    console.log(`Added new service: ${service.name}`)
+    
+    return { success: true, message: 'Service added successfully' }
+})
+
+// Remove a service from monitoring
+ipcMain.handle('remove-service', (event, serviceName) => {
+    const services = store.get('services', [])
+    const filteredServices = services.filter(s => s.name !== serviceName)
+    
+    if (filteredServices.length === services.length) {
+        return { success: false, message: 'Service not found' }
+    }
+    
+    store.set('services', filteredServices)
+    serviceStatusHistory.delete(serviceName)
+    console.log(`Removed service: ${serviceName}`)
+    
+    return { success: true, message: 'Service removed successfully' }
+})
+
 // Track all active processes for cleanup
 let activeProcesses = []
 let activeTimeouts = []
@@ -783,19 +1722,15 @@ function cleanupResources() {
             appTracker = null
         }
         
-        // Clean up service monitoring cron job
-        if (serviceCheckInterval) {
+        // Clean up service monitoring timeout
+        if (serviceCheckTimeout) {
             try {
-                console.log('Stopping service check interval...')
-                if (typeof serviceCheckInterval.destroy === 'function') {
-                    serviceCheckInterval.destroy()
-                } else if (typeof serviceCheckInterval.stop === 'function') {
-                    serviceCheckInterval.stop()
-                }
-            } catch (cronError) {
-                console.warn('Failed to stop cron job:', cronError.message)
+                console.log('Stopping service check timeout...')
+                clearTimeout(serviceCheckTimeout.timeout || serviceCheckTimeout)
+            } catch (timeoutError) {
+                console.warn('Failed to clear service timeout:', timeoutError.message)
             }
-            serviceCheckInterval = null
+            serviceCheckTimeout = null
         }
         
         // Kill any active child processes
