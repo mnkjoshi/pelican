@@ -1,0 +1,28 @@
+﻿@import 'tailwindcss';
+
+:root {
+  --background: #ffffff;
+  --foreground: #0f172a;
+}
+
+.dark {
+  --background: #020617;
+  --foreground: #f8fafc;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  color: var(--foreground);
+  background: var(--background);
+  transition: color 0.3s ease, background-color 0.3s ease;
+}
+
+button, a, [role="button"] {
+  cursor: pointer;
+}

@@ -1,0 +1,47 @@
+{
+  "services": [
+    {
+      "name": "Portfolio Website",
+      "url": "https://yourwebsite.com"
+    },
+    {
+      "name": "Discord Bot",
+      "url": "https://your-discord-bot-health-endpoint.com"
+    },
+    {
+      "name": "Backend API",
+      "url": "https://api.yourservice.com/health"
+    },
+    {
+      "name": "Database Health",
+      "url": "https://your-db-health-check.com"
+    }
+  ],
+  "socials": {
+    "siteVisits": 1247,
+    "discordMembers": 892,
+    "robloxMembers": 15634,
+    "githubStars": 47
+  },
+  "canvas": {
+    "apiUrl": "https://your-canvas-instance.instructure.com/api/v1",
+    "apiToken": "your-canvas-api-token-here",
+    "userId": "your-user-id"
+  },
+  "calendar": {
+    "googleApiKey": "your-google-api-key",
+    "calendarId": "primary",
+    "refreshInterval": 300000
+  },
+  "updateIntervals": {
+    "services": 60000,
+    "usage": 30000,
+    "calendar": 300000,
+    "socials": 600000
+  },
+  "theme": {
+    "accentColor": "#00BFFF",
+    "backgroundBlur": 10,
+    "animationSpeed": "0.3s"
+  }
+}
